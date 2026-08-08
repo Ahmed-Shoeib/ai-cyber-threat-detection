@@ -26,7 +26,7 @@ def test_build_alert_from_brute_force_detection():
         "window_start": "2025-01-01T09:00:00",
         "detection_reason": "test reason",
     }
-    alert = build_alert(detection)
+    alert = build_alert(detection, [detection])
     for field in REQUIRED_ALERT_FIELDS:
         assert field in alert, f"Missing field: {field}"
     assert alert["mitre_technique_id"] == "T1110"

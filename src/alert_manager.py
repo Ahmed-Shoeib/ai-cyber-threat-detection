@@ -15,19 +15,12 @@ import pandas as pd
 
 from src.detection_rules import detect_brute_force, detect_port_scan, detect_sql_injection
 from src.mitre_mapping import get_mitre_info
+from src.risk_scoring import calculate_risk_score, score_to_severity
 
 THREAT_NAMES = {
     "brute_force": "Brute Force Login Attempt",
     "port_scan": "Port Scanning Activity",
     "sql_injection": "Suspicious SQL Injection Pattern",
-}
-
-# Placeholder severity until Phase 9 builds the real scoring logic.
-# We keep this simple and clearly temporary so nothing here is mysterious.
-PLACEHOLDER_SEVERITY = {
-    "brute_force": "High",
-    "port_scan": "Medium",
-    "sql_injection": "High",
 }
 
 
@@ -52,12 +45,15 @@ def _build_description(detection: dict) -> str:
     return "Suspicious activity detected."
 
 
-def build_alert(detection: dict) -> dict:
+def build_alert(detection: dict, all_detections: list[dict]) -> dict:
     """Converts one raw detection dictionary into a standardized alert."""
     dtype = detection["detection_type"]
     mitre = get_mitre_info(dtype)
 
     timestamp = detection.get("timestamp") or detection.get("window_start")
+
+    risk_score = calculate_risk_score(detection, all_detections)
+    severity = score_to_severity(risk_score)
 
     return {
         "alert_id": str(uuid.uuid4())[:8],
@@ -68,7 +64,8 @@ def build_alert(detection: dict) -> dict:
         "detection_type": dtype,
         "description": _build_description(detection),
         "detection_reason": detection.get("detection_reason", ""),
-        "severity": PLACEHOLDER_SEVERITY.get(dtype, "Low"),
+        "risk_score": risk_score,
+        "severity": severity,
         "confidence_or_anomaly_score": None,  # filled in once ML joins, Phase 11
         "mitre_tactic": mitre["tactic"],
         "mitre_technique_id": mitre["technique_id"],
@@ -85,7 +82,7 @@ def generate_all_alerts(df: pd.DataFrame) -> list[dict]:
     all_detections += detect_port_scan(df)
     all_detections += detect_sql_injection(df)
 
-    return [build_alert(d) for d in all_detections]
+    return [build_alert(d, all_detections) for d in all_detections]
 
 
 def save_alerts(alerts: list[dict], output_path: Path) -> None:
@@ -109,7 +106,7 @@ if __name__ == "__main__":
 
     print(f"Generated {len(alerts)} total alerts:\n")
     for a in alerts:
-        print(f"[{a['severity']}] {a['threat_name']} - {a['source_ip']} "
-              f"({a['mitre_technique_id']}: {a['mitre_technique_name']})")
+        print(f"[{a['severity']} | score {a['risk_score']}] {a['threat_name']} - "
+              f"{a['source_ip']} ({a['mitre_technique_id']}: {a['mitre_technique_name']})")
 
     save_alerts(alerts, Path("data/processed/alerts.json"))
