@@ -55,3 +55,57 @@ if __name__ == "__main__":
     test_detects_brute_force_burst()
     test_no_detection_for_normal_activity()
     print("All detection_rules tests passed.")
+
+
+
+from src.detection_rules import detect_port_scan
+
+
+def make_connection_row(timestamp, source_ip, destination_port):
+    return {
+        "timestamp": pd.Timestamp(timestamp),
+        "source_ip": source_ip,
+        "destination_ip": "10.0.0.5",
+        "source_port": 5000,
+        "destination_port": destination_port,
+        "protocol": "TCP",
+        "event_type": "connection",
+        "username": "",
+        "login_status": "",
+        "http_method": "",
+        "url_or_path": "",
+        "response_status_code": 0,
+        "bytes_transferred": 50,
+    }
+
+
+def test_detects_port_scan_burst():
+    """12 distinct ports touched in under a minute should trigger one detection."""
+    ports = [20 + i for i in range(12)]
+    rows = [
+        make_connection_row(f"2025-01-01T10:00:{i:02d}", "5.6.7.8", port)
+        for i, port in enumerate(ports)
+    ]
+    df = pd.DataFrame(rows)
+    detections = detect_port_scan(df)
+    assert len(detections) == 1
+    assert detections[0]["distinct_ports_touched"] >= 10
+
+
+def test_no_detection_for_repeated_same_port():
+    """Many connections to the SAME port should NOT count as a scan."""
+    rows = [
+        make_connection_row(f"2025-01-01T10:00:{i:02d}", "5.6.7.8", 443)
+        for i in range(15)
+    ]
+    df = pd.DataFrame(rows)
+    detections = detect_port_scan(df)
+    assert len(detections) == 0
+
+
+if __name__ == "__main__":
+    test_detects_brute_force_burst()
+    test_no_detection_for_normal_activity()
+    test_detects_port_scan_burst()
+    test_no_detection_for_repeated_same_port()
+    print("All detection_rules tests passed.")
