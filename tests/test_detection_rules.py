@@ -109,3 +109,54 @@ if __name__ == "__main__":
     test_detects_port_scan_burst()
     test_no_detection_for_repeated_same_port()
     print("All detection_rules tests passed.")
+
+from src.detection_rules import detect_sql_injection
+
+
+def make_web_request_row(timestamp, source_ip, url_path):
+    return {
+        "timestamp": pd.Timestamp(timestamp),
+        "source_ip": source_ip,
+        "destination_ip": "10.0.0.5",
+        "source_port": 5000,
+        "destination_port": 443,
+        "protocol": "TCP",
+        "event_type": "http_request",
+        "username": "",
+        "login_status": "",
+        "http_method": "GET",
+        "url_or_path": url_path,
+        "response_status_code": 200,
+        "bytes_transferred": 500,
+    }
+
+
+def test_detects_sql_injection_pattern():
+    """A request containing a known SQLi pattern should be flagged."""
+    rows = [
+        make_web_request_row("2025-01-01T11:00:00", "9.9.9.9", "/search?q=UNION SELECT * FROM users"),
+    ]
+    df = pd.DataFrame(rows)
+    detections = detect_sql_injection(df)
+    assert len(detections) == 1
+    assert "union select" in detections[0]["matched_patterns"]
+
+
+def test_no_detection_for_normal_request():
+    """A normal, harmless request should not be flagged."""
+    rows = [
+        make_web_request_row("2025-01-01T11:00:00", "9.9.9.9", "/products?id=5"),
+    ]
+    df = pd.DataFrame(rows)
+    detections = detect_sql_injection(df)
+    assert len(detections) == 0
+
+
+if __name__ == "__main__":
+    test_detects_brute_force_burst()
+    test_no_detection_for_normal_activity()
+    test_detects_port_scan_burst()
+    test_no_detection_for_repeated_same_port()
+    test_detects_sql_injection_pattern()
+    test_no_detection_for_normal_request()
+    print("All detection_rules tests passed.")

@@ -145,6 +145,65 @@ def detect_port_scan(df: pd.DataFrame) -> list[dict]:
 
     return detections
 
+# --- SQL injection pattern detection settings ---
+SQLI_PATTERNS = [
+    "union select",
+    "' or 1=1",
+    "or 1=1--",
+    "sleep(",
+    "information_schema",
+    "' or '1'='1",
+    "--",
+    "drop table",
+]
+
+
+def detect_sql_injection(df: pd.DataFrame) -> list[dict]:
+    """
+    Flags http_request events whose url_or_path contains a known
+    SQL-injection-testing pattern.
+
+    Approach:
+    1. Keep only http_request events with a non-empty url_or_path.
+    2. Lowercase the path so matching isn't case-sensitive (attackers and
+       tools vary capitalization, e.g., 'UNION SELECT' vs 'union select').
+    3. Check the path against a list of known suspicious substrings.
+    4. Record which specific pattern(s) matched, since that's useful
+       evidence for an analyst reviewing the alert later.
+
+    This is deliberately simple substring matching, not a full parser —
+    that's a known limitation, explained in detection_reason and in the
+    project docs.
+    """
+    web_requests = df[
+        (df["event_type"] == "http_request") & (df["url_or_path"] != "")
+    ].copy()
+
+    detections = []
+
+    for _, row in web_requests.iterrows():
+        path_lower = row["url_or_path"].lower()
+        matched_patterns = [p for p in SQLI_PATTERNS if p in path_lower]
+
+        if matched_patterns:
+            detections.append(
+                {
+                    "detection_type": "sql_injection",
+                    "source_ip": row["source_ip"],
+                    "destination_ip": row["destination_ip"],
+                    "username": "",
+                    "url_or_path": row["url_or_path"],
+                    "matched_patterns": matched_patterns,
+                    "timestamp": row["timestamp"],
+                    "detection_reason": (
+                        f"Request path contains suspicious pattern(s) "
+                        f"{matched_patterns} associated with SQL injection testing"
+                    ),
+                }
+            )
+
+    return detections
+
 if __name__ == "__main__":
     from pathlib import Path
     from src.log_parser import load_and_prepare_logs
@@ -155,10 +214,15 @@ if __name__ == "__main__":
     print(f"Found {len(bf_results)} brute-force detection(s):\n")
     for d in bf_results:
         print(d)
-
     print()
 
     ps_results = detect_port_scan(logs)
     print(f"Found {len(ps_results)} port-scan detection(s):\n")
     for d in ps_results:
+        print(d)
+    print()
+
+    sqli_results = detect_sql_injection(logs)
+    print(f"Found {len(sqli_results)} SQL-injection detection(s):\n")
+    for d in sqli_results:
         print(d)
