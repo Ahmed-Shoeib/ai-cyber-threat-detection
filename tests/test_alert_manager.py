@@ -40,7 +40,19 @@ def test_generate_all_alerts_on_real_data():
     assert len(alert_ids) == len(set(alert_ids))  # all unique
 
 
+def test_alerts_have_anomaly_scores_populated():
+    """After ML integration, at least some alerts should have a real anomaly score."""
+    logs = load_and_prepare_logs(Path("data/raw/synthetic_logs.csv"))
+    alerts = generate_all_alerts(logs)
+    scored_alerts = [
+        a for a in alerts
+        if a["confidence_or_anomaly_score"] is not None
+    ]
+    assert len(scored_alerts) > 0
+
+
 if __name__ == "__main__":
     test_build_alert_from_brute_force_detection()
     test_generate_all_alerts_on_real_data()
+    test_alerts_have_anomaly_scores_populated()
     print("All alert_manager tests passed.")

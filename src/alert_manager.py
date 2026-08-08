@@ -16,6 +16,9 @@ import pandas as pd
 from src.detection_rules import detect_brute_force, detect_port_scan, detect_sql_injection
 from src.mitre_mapping import get_mitre_info
 from src.risk_scoring import calculate_risk_score, score_to_severity
+from src.feature_engineering import build_features
+from src.anomaly_detector import train_model, score_features
+
 
 THREAT_NAMES = {
     "brute_force": "Brute Force Login Attempt",
@@ -66,7 +69,7 @@ def build_alert(detection: dict, all_detections: list[dict]) -> dict:
         "detection_reason": detection.get("detection_reason", ""),
         "risk_score": risk_score,
         "severity": severity,
-        "confidence_or_anomaly_score": None,  # filled in once ML joins, Phase 11
+        "confidence_or_anomaly_score": None,
         "mitre_tactic": mitre["tactic"],
         "mitre_technique_id": mitre["technique_id"],
         "mitre_technique_name": mitre["technique_name"],
@@ -75,14 +78,46 @@ def build_alert(detection: dict, all_detections: list[dict]) -> dict:
     }
 
 
+def _build_anomaly_lookup(df: pd.DataFrame) -> dict:
+    """
+    Builds a source_ip -> anomaly_score_0_100 lookup so we can attach ML
+    context to rule-based alerts without letting ML override them.
+    """
+    features = build_features(df)
+    model = train_model(features)
+    scored = score_features(model, features)
+
+    return dict(zip(scored["source_ip"], scored["anomaly_score_0_100"]))
+
+
 def generate_all_alerts(df: pd.DataFrame) -> list[dict]:
-    """Runs all three detection rules and converts every result into an alert."""
+    """Runs all three detection rules, attaches ML anomaly context, and
+    converts every result into a standardized alert.
+    """
     all_detections = []
     all_detections += detect_brute_force(df)
     all_detections += detect_port_scan(df)
     all_detections += detect_sql_injection(df)
 
-    return [build_alert(d, all_detections) for d in all_detections]
+    anomaly_lookup = _build_anomaly_lookup(df)
+
+    alerts = []
+
+    for detection in all_detections:
+        alert = build_alert(detection, all_detections)
+
+        source_ip = detection.get("source_ip")
+        anomaly_score = anomaly_lookup.get(source_ip)
+
+        if anomaly_score is not None:
+            alert["confidence_or_anomaly_score"] = anomaly_score
+
+            if anomaly_score >= 70:
+                alert["detection_method"] = "rule-based + ML-confirmed"
+
+        alerts.append(alert)
+
+    return alerts
 
 
 def save_alerts(alerts: list[dict], output_path: Path) -> None:
@@ -105,8 +140,12 @@ if __name__ == "__main__":
     alerts = generate_all_alerts(logs)
 
     print(f"Generated {len(alerts)} total alerts:\n")
+
     for a in alerts:
-        print(f"[{a['severity']} | score {a['risk_score']}] {a['threat_name']} - "
-              f"{a['source_ip']} ({a['mitre_technique_id']}: {a['mitre_technique_name']})")
+        print(
+            f"[{a['severity']} | score {a['risk_score']}] "
+            f"{a['threat_name']} - {a['source_ip']} "
+            f"({a['mitre_technique_id']}: {a['mitre_technique_name']})"
+        )
 
     save_alerts(alerts, Path("data/processed/alerts.json"))
